@@ -1,0 +1,52 @@
+import pandas as pd
+
+#importamos la data del archivo txt
+data = pd.read_csv('checkins.txt', delim_whitespace=True, header=None, names=[user_id, venue_id])
+
+#Modelamos en el espacio vectorial esta realidad para hallar patrones
+#Empezamos a partir de los usuarios unicos
+len(data.user_id.unique())
+
+#Procedemos a escoger el metrico de distancia para hallar las similitudes
+#En este caso sera la distancia de Jaccard
+#Creamos una columna que cuente duplicados
+data['checkin'] = 1
+#Verificamos si hay duplicados y en el caso los borramos
+data.groupby(['user_id', 'venue_id']).count().sort_values('checkin', ascending=False)
+data = data.drop_duplicates()
+
+#Procedemos a codificar en una matriz si un usuario unico ha visitado (1) o no (0) un lugar
+checkins_matrix = data.reset_index().pivot(index='venue_id', columns='user_id', values='checkin').fillna(0).astype(int)
+#Podemos visualizar el lugar mas visitado por personas independientes
+checkins_matrix.sum(axis=1).sort_values(ascending=False)
+#Podemos visualizarlo en un histograma
+checkins_matrix.sum(axis=1).hist(log=True)
+
+#Calculamos la similaridad de Jaccard que no es mas que la interseccion entre la union
+def jaccard_similarity(venue_1, venue_2):
+    venue_1_user_indices = set( venue_1[venue_1 > 0].index )
+    venue_2_user_indices = set( venue_2[venue_2 > 0].index )
+    intersection_length = len(venue_1_user_indices.intersection(venue_2_user_indices))
+    union_length = len(venue_1_user_indices.union(venue_2_user_indices))
+    
+    return intersection_length / union_length
+
+#Creamos una funcion que arroje las recomendaciones segun sea el lugar que se coloque
+def compute_pairwise_jaccard_similarities(query_venue_index):
+    query_venue = checkins_matrix.ix[query_venue_index]
+    candidate_venues = checkins_matrix.drop(query_venue_index, axis=0)
+    similarities = {}
+    
+    for candidate_venue_id, candidate_venue in candidate_venues.iterrows():
+        similarity = jaccard_similarity(query_venue, candidate_venue)
+        similarities[candidate_venue_id] = similarity
+        
+    return pd.Series(similarities)
+
+#Escribimos un programa que pida el index del lugar a recomendar
+while True:
+	try:
+        query_venue_index = int( input('Please enter a query venue index: ') )
+        print( compute_pairwise_jaccard_similarities(query_venue_index).sort_values(ascending=False).head(5) )
+    except:
+    	pass
