@@ -1,0 +1,164 @@
+import re, string
+
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+
+//This code predicts if an input string is an insult base on data extracted from twitter. It's a csv file with the form: insult(True or False), date and comment
+//First it tries different models to evaluate the scores and the we create a Class and a Function to do automatize the process.
+
+//Standarizing input data
+def clean_text(text):
+    text = text.lower()
+    text = re.findall(r'\b[a-z]+\b', text)
+    return ' '.join(text)
+
+//Loading data to Ram 
+training_data = pd.read_csv('insultdata.csv')
+training_data.columns = [col.lower() for col in training_data.columns]
+training_data['cleaned_data'] = training_data.Comment.map(clean_text)
+training_data.head()
+
+//First model
+count_vectorizer = CountVectorizer(analyzer='word', stop_words='english', ngram_range=(1, 3), max_features=50000)
+count_vectorizer.fit(training_data.cleaned_data)
+X = count_vectorizer.transform(training_data.cleaned_data)
+y = training_data.insult
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
+
+//Second model
+model = RandomForestClassifier(n_jobs=2)
+model.fit(X_train, y_train)
+model_predictions = model.predict(X_val)
+accuracy_score(y_val, model_predictions)
+
+//Third model
+model2 = LinearSVC()
+model2.fit(X_train, y_train)
+model_predictions2 = model2.predict(X_val)
+accuracy_score(y_val, model_predictions2)
+
+//Personalizing data sampling
+def split_data(X, y, p=.75):
+    mask = np.array([bool(np.random.binomial(1, p)) for _ in range(X.shape[0])])
+    
+    X_train = X[mask]
+    y_train = y[mask]
+    X_validation = X[~mask]
+    y_validation = y[~mask]
+    return X_train, X_validation, y_train, y_validation
+
+//Fourth model
+train_X, val_X, train_y, val_y = split_data(X, y)
+clf = LogisticRegression()
+clf.fit(train_X, train_y)
+clf_prediction = clf.predict(val_X)
+accuracy_score(val_y, clf_prediction)
+
+//Automatizing the fit-predict process
+class PredictionPipeline:
+    
+    def __init___(self, ngram_range, vectorizer_class, model_class, training_data):
+        self.ngram_range=ngram_range
+        self.vectorizer_class=vectorizer_class
+        self.model_class=model_class
+        self.training_data=training_data
+        self.vectorizer=None
+        self.X=None
+        self.y=None
+        self.model=None
+        self.validation_score=None
+    
+    def run(self):
+        self._fit_vectorizer()
+        self._feature_text()
+        self._split_train_and_validation_sets()
+        self._fit_model()
+        self._score_model()
+        
+        print(
+            """
+            Vectorizer Class: {vectorizer_class}\n\
+            N-gram Range: {ngram_range}\n\
+            Model Class: {model_class}\n\
+            Validation Score: {validation_score}
+            """.format(
+            
+            vectorizer_class=repr(self.vectorizer_class.__name__),
+            ngram_range=self.ngram_range,
+            model_class=repr(self.model_class.__name__),
+            validation_score=round(self.validation_score, 4)
+            
+            )
+        )
+    def _fit_vectorizer(self):
+        self.vectorizer = vectorizer_class(analyzer='word', ngram_range=ngram_range,
+                                          stop_words='english', max_features=50000)
+        self.vectorizer.fit(self.training_data.cleaned_data)
+        
+    def _feature_text(self):
+        self.X=self.vectorizer.transform(self.training_data.cleaned_data)
+        self.y=self.training_data.insult
+    
+    def _split_train_and_validation_sets(self):
+        self.train_X, self.X_validation, self.train_y, self.y_validation = split_data(self.X, self.y)
+        
+    def _fit_model(self):
+        self.model = self.model_class()
+        self.model.fit(self.train_X, self.train_y)
+        
+    def _score_model(self):
+        prediction = self.model.predict(self.X_validation)
+        self.validation_score = accuracy_score(y_validation, prediction)
+
+//For loop para alternar cada modelo predictivo con cada modelo transformador de datos y guardar sus resultados en un diccionario.
+results = {}
+for ngram_range in [(1, 1), (1, 2), (1, 3), (1, 4)]:
+    for vectorizer_class in [CountVectorizer, TfidfVectorizer]:
+        for model_class in [LogisticRegression, LinearSVC, RandomForestClassifier]:
+            
+            prediction_pipeline = PredictionPipeline(ngram_range=ngram_range, vectorizer_class=vectorizer_class,
+                                                    model_class=model_class, training_data=training_data)
+            
+            prediction_pipeline.run()
+            
+            results[str(prediction_pipeline.validation_score)] = {
+                'vectorizer_class' : prediction_pipeline.vectorizer_class,
+                'ngram_range' : prediction_pipeline.ngram_range,
+                'model_class' : prediction_pipeline.model_class
+            }
+
+//Imprimir los tres mejores resultados obtenidos de la iteracion 
+top_3 = sorted(results.keys(), reverse=True)[:3]
+for score in top_3:
+    print('Score: {}\nParameters: {}'.format(score, results[score]))
+
+//Escoger la mejor combinacion de modelos y ajustarlo con la totalidad de la data para ser pasado a produccion
+top = top_3[0]
+vectorizer_class = results[top]['vectorizer_class']
+ngram_range = results[top]['ngram_range']
+model_class = results[top]['model_class']
+
+vectorizer = vectorizer_class(analyzer = 'word', ngram_range=ngram_range,
+                             stop_words='english', max_features=50000)
+vectorizer.fit(training_data.cleaned_data)
+
+X = vectorizer.transform(training_data.cleaned_data)
+y = training_data.insult
+
+top_model = model_class()
+top_model.fit(X, y)
+
+//Aplicacion de consola para clasificar insultos 
+while True:
+    input_string = input('Please enter a string: ')
+    input_string = clean_text(input_string)
+    x_test = vectorizer.transform([input_string])
+    
+    pred = top_model.predict(x_test)
+    print('Insult? {}'.format(bool(pred)))
